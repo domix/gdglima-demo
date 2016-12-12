@@ -1,0 +1,22 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: k8s-deployment-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: k8s-deployment-demo
+  template:
+    metadata:
+      labels:
+        app: k8s-deployment-demo
+        version: 0.1.1
+    spec:
+      containers:
+      - name: gdg-lima-talk
+        image: domix/gdg-lima-talk:0.1.1
+        imagePullPolicy: Always
+        ports:
+          - containerPort: 8080
+            #protocol: TCP

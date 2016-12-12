@@ -1,0 +1,137 @@
+
+buildscript {
+  ext {
+    springBootVersion = '1.4.2.RELEASE'
+  }
+  repositories {
+    mavenCentral()
+  }
+  dependencies {
+    classpath("org.springframework.boot:spring-boot-gradle-plugin:${springBootVersion}")
+    classpath 'com.bmuschko:gradle-docker-plugin:3.0.3'
+  }
+}
+
+apply plugin: 'java'
+apply plugin: 'groovy'
+apply plugin: 'eclipse'
+apply plugin: 'idea'
+apply plugin: 'org.springframework.boot'
+apply plugin: 'com.bmuschko.docker-remote-api'
+
+ext {
+  // Define tag for Docker image. Include project version and name.
+  dockerTag = "domix/gdg-lima-talk:${project.version}".toLowerCase()
+
+  // Staging directory for create Docker image.
+  dockerBuildDirString = "${buildDir}/docker"
+
+  dockerBuildDir = mkdir(dockerBuildDirString)
+
+  // Group name for tasks related to Docker.
+  dockerBuildGroup = 'Docker'
+}
+
+Date buildTimeAndDate = new Date()
+import java.text.SimpleDateFormat
+ext {
+  buildDate = new SimpleDateFormat('dd-MMM-yyyy').format(buildTimeAndDate)
+  buildTime = new SimpleDateFormat('hh:mm aa').format(buildTimeAndDate)
+  theVersion = version
+}
+
+def jarManifestAttributes = [
+  'Built-By'              : System.properties['user.name'],
+  'Created-By'            : System.properties['java.version'] + ' (' + System.properties['java.vendor'] + ' ' + System.getProperty("java.vm.version") + ")",
+  'Build-Date'            : buildDate,
+  'Build-Time'            : buildTime,
+  'Implementation-Version': theVersion
+]
+
+jar {
+  manifest {
+    attributes(jarManifestAttributes)
+  }
+}
+
+sourceCompatibility = 1.8
+targetCompatibility = 1.8
+
+repositories {
+  mavenCentral()
+}
+
+dependencies {
+  compile('org.springframework.boot:spring-boot-starter-web')
+  compile 'org.codehaus.groovy:groovy:2.4.7'
+  testCompile('org.springframework.boot:spring-boot-starter-test')
+}
+
+configurations {
+  dockerJava {
+    resolutionStrategy {
+      force 'de.gesellix:unix-socket-factory:2016-04-06T22-21-19'
+    }
+  }
+}
+
+docker {
+  // Set Docker host URL based on existence of environment
+  // variable DOCKER_HOST.
+  url = System.env.DOCKER_HOST ?
+    System.env.DOCKER_HOST.replace("tcp", "https") :
+    'unix:///var/run/docker.sock'
+
+  registryCredentials {
+
+    url = project.hasProperty('dockerRegistryUrl') ? dockerRegistryUrl : 'https://hub.docker.com/v2/'
+    
+    username = project.hasProperty('dockerRegistryUsername') ? dockerRegistryUsername : ''
+    password = project.hasProperty('dockerRegistryPassword') ? dockerRegistryPassword : ''
+  }
+}
+
+
+import com.bmuschko.gradle.docker.tasks.container.*
+import com.bmuschko.gradle.docker.tasks.image.*
+
+task dockerRepackage(type: Copy, dependsOn: bootRepackage) {
+  description = 'Repackage application JAR to make it runnable.'
+  group = dockerBuildGroup
+
+  ext {
+    dockerJar = file("build/libs/${jar.archiveName}")
+  }
+
+  into dockerBuildDir
+  from "build/libs/${jar.archiveName}"
+}
+
+task createDockerfile(type: Dockerfile, dependsOn: dockerRepackage) {
+  description = 'Create Dockerfile to build image.'
+  group = dockerBuildGroup
+
+  destFile = file("${dockerBuildDir}/Dockerfile")
+
+  from 'openjdk:8-jre-alpine'
+  maintainer 'Domingo Suarez Torres <domingo.suarez@gmail.com>'
+
+  exposePort 8080
+
+  copyFile dockerRepackage.dockerJar.name, '/app/application.jar'
+
+  entryPoint 'java', '-jar', '/app/application.jar'
+}
+
+task buildImage(type: DockerBuildImage, dependsOn: createDockerfile) {
+  description = 'Create Docker image with application.'
+  group = dockerBuildGroup
+
+  inputDir = file(dockerBuildDir)
+  tag = dockerTag
+}
+
+task pushImage(type: DockerPushImage) {
+  dependsOn buildImage
+  conventionMapping.imageName = { buildImage.getTag() }
+}
